@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HTTP 请求监控面板</title>
+  <link rel="stylesheet" href="element-index.css" />
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body { background: #f8fafc; color: #1e293b; }
+    .app-container { max-width: 1400px; margin: 0 auto; padding: 16px; }
+    .header-title { font-size: 24px; font-weight: 600; color: #334155; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .flex { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1); }
+    .footer { opacity: .7; font-size: 12px; margin-top: 12px; color: #64748b; }
+    .el-input__wrapper, .el-select__wrapper { background-color: #ffffff !important; }
+    .el-table { --el-table-bg-color: #ffffff; --el-table-tr-bg-color: #ffffff; --el-table-header-bg-color: #f8fafc; --el-table-text-color: #1e293b; }
+    .nowrap { white-space: nowrap; }
+    .body-pre { background: #f1f5f9; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; max-height: 200px; overflow: auto; }
+    .kv { display: grid; grid-template-columns: 160px 1fr; gap: 8px 12px; }
+    .tag-send { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+    .tag-recv { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .main-table { min-height: 600px; }
+    .virtual-table-header { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid #e2e8f0; padding: 8px; background: #f8fafc; }
+    .virtual-header-cell { font-weight: 600; color: #334155; white-space: nowrap; }
+    .virtual-table-container { position: relative; height: 640px; overflow: auto; }
+    .virtual-table-spacer { width: 1px; opacity: 0; }
+    .virtual-table-row, .virtual-expand-row { display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #f1f5f9; background: #ffffff; }
+    .virtual-table-viewport { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+    .virtual-expand-row { background: #fcfcfd; }
+    .virtual-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  </style>
+</head>
+<body>
+  <div id="app" class="app-container">
+
+    <div class="card" style="margin-bottom: 12px;">
+      <div class="flex" style="justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <div class="flex" style="gap: 8px; align-items: center;">
+          <el-tag type="success">自动连接: {{ autoUrl }}</el-tag>
+          <el-switch v-model="paused"  active-text="暂停接收" inactive-text="接收中"></el-switch>
+          <el-tooltip content="当前累计事件数">
+            <el-tag>事件: {{ events.length }}</el-tag>
+          </el-tooltip>
+          <el-tag type="info">模式: {{ connTypeDisplay }}</el-tag>
+          <el-button type="primary" size="small" :disabled="isConnected" @click="reconnect">重连</el-button>
+          <el-button size="small" @click="clearAll">清空</el-button>
+        </div>
+        <div class="flex" style="gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; min-width: 600px;">
+          <el-input v-model="filters.keyword" placeholder="搜索 进程名/方法/URL/Host" style="width: 260px" clearable></el-input>
+          <el-input v-model.number="filters.pid" placeholder="PID" style="width: 120px" clearable></el-input>
+          <el-select v-model="filters.wire" placeholder="方向(send/recv)" style="width: 160px" clearable>
+            <el-option label="send" value="send"></el-option>
+            <el-option label="recv" value="recv"></el-option>
+          </el-select>
+          <el-select v-model="filters.httpDirection" placeholder="HTTP 类型" style="width: 180px" clearable>
+            <el-option label="request" value="request"></el-option>
+            <el-option label="response" value="response"></el-option>
+            <el-option label="unknown" value="unknown"></el-option>
+          </el-select>
+        </div>
+        </div>
+       
+     </div>
+ 
+      <div class="card main-table">
+        <div class="virtual-table-header">
+        <div class="virtual-header-cell" style="width: 40px;">展开</div>
+        <div class="virtual-header-cell" style="width: 180px;" @click="toggleSort('time')">时间 {{ getSortIcon('time') }}</div>
+        <div class="virtual-header-cell" style="width: 90px;" @click="toggleSort('pid')">PID {{ getSortIcon('pid') }}</div>
+        <div class="virtual-header-cell" style="width: 160px;">进程名</div>
+        <div class="virtual-header-cell" style="width: 110px;">方向</div>
+        <div class="virtual-header-cell" style="width: 110px;">HTTP</div>
+        <div class="virtual-header-cell" style="width: 100px;">方法</div>
+        <div class="virtual-header-cell" style="flex: 1; min-width: 280px;">路径/状态</div>
+        <div class="virtual-header-cell" style="width: 180px;">本地</div>
+        <div class="virtual-header-cell" style="width: 180px;">远端</div>
+        <div class="virtual-header-cell" style="width: 100px;" @click="toggleSort('len')">长度 {{ getSortIcon('len') }}</div>
+        <div class="virtual-header-cell" style="width: 100px;">截断</div>
+      </div>
+      <div ref="virtualTableContainer" class="virtual-table-container" @scroll="onScroll">
+        <div class="virtual-table-spacer" :style="{ height: spacerHeight + 'px' }"></div>
+        <div class="virtual-table-viewport" :style="{ transform: 'translateY(' + topOffset + 'px)' }">
+          <div v-for="(item, i) in visibleItems" :key="item && item.id ? item.id : i" class="virtual-table-row">
+            <div class="virtual-cell" style="width: 40px;">
+              <el-button size="small" text @click="openExpand(item)">详情</el-button>
+            </div>
+            <div class="virtual-cell" style="width: 180px;">{{ formatTime(item.time) }}</div>
+            <div class="virtual-cell" style="width: 90px;">{{ item.pid }}</div>
+            <div class="virtual-cell" style="width: 160px;" :title="item.comm">{{ item.comm }}</div>
+            <div class="virtual-cell" style="width: 110px;">
+              <el-tag size="small" :class="item.wire==='send'?'tag-send':'tag-recv'">{{ item.wire }}</el-tag>
+            </div>
+            <div class="virtual-cell" style="width: 110px;">{{ item.http.direction }}</div>
+            <div class="virtual-cell" style="width: 100px;">{{ item.summary.method || '-' }}</div>
+            <div class="virtual-cell" style="flex: 1; min-width: 280px;" :title="item.summary.detail">{{ item.summary.detail }}</div>
+            <div class="virtual-cell" style="width: 180px;" :title="formatAddr(item.srcIP, item.srcPort)">{{ formatAddr(item.srcIP, item.srcPort) }}</div>
+            <div class="virtual-cell" style="width: 180px;" :title="formatAddr(item.dstIP, item.dstPort)">{{ formatAddr(item.dstIP, item.dstPort) }}</div>
+            <div class="virtual-cell" style="width: 100px;">{{ item.len }}</div>
+            <div class="virtual-cell" style="width: 100px;">{{ item.truncated ? '是' : '否' }}</div>
+          </div>
+          <!-- Remove inline expanded rows block -->
+          <!-- previously here: v-for virtual-expand-row -->
+          </div>
+          </div>
+          
+          <!-- Details dialog -->
+          <el-dialog v-model="expandVisible" title="详情" width="80%">
+            <template #default>
+              <div class="flex" style="align-items: flex-start;">
+                <div style="flex: 1; min-width: 360px;">
+                  <div style="font-weight: 600; margin-bottom: 6px;">Headers</div>
+                  <div class="kv mono">
+                    <template v-for="(v, k) in (expandItem?.http?.headers || {})" :key="k">
+                      <div style="opacity:.7;">{{ k }}</div>
+                      <div>{{ v }}</div>
+                    </template>
+                  </div>
+                </div>
+                <div style="flex: 1; min-width: 360px;">
+                  <div style="font-weight: 600; margin-bottom: 6px;">Body</div>
+                  <pre class="body-pre mono">{{ expandItem?.http?.body || '' }}</pre>
+                </div>
+              </template>
+              <template #footer>
+                <el-button @click="expandVisible=false">关闭</el-button>
+              </template>
+            </el-dialog>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="vue.js"></script>
+  <script src="element-index.js"></script>
+  <script>
+    const { createApp, reactive, computed, onMounted, ref, watch, toRefs } = Vue
+
+    function tryParseJSONLine(line) {
+      try { return JSON.parse(line) } catch { return null }
+    }
+
+    function parseStartLine(headers) {
+      const sl = headers?.[":start-line"] || ""
+      if (!sl) return { method: "", detail: "" }
+      // 请求: GET /path HTTP/1.1
+      // 响应: HTTP/1.1 200 OK
+      if (sl.startsWith("HTTP/")) {
+        const parts = sl.split(/\s+/)
+        const code = parts[1] || ""
+        const rest = parts.slice(2).join(" ")
+        return { method: "-", detail: `${code} ${rest}`.trim() }
+      } else {
+        const m = sl.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)(?:\s+HTTP\/\d\.\d)?/)
+        if (m) return { method: m[1], detail: m[2] }
+        return { method: sl.split(' ')[0] || '', detail: sl }
+      }
+    }
+
+    function normalizeEvent(obj) {
+      const now = Date.now()
+      const pid = Number(obj.pid || obj.PID) || 0
+      const comm = obj.comm || obj.COMM || obj.process || ''
+      const wire = obj.wire || obj.Wire || (obj.direction===1?'recv':'send') || 'send'
+      const http = obj.http || obj.HTTP || obj.Http || {}
+      const direction = http.direction || obj.httpDirection || obj.Direction || 'unknown'
+      const headers = http.headers || http.Headers || {}
+      const body = http.body || http.Body || ''
+      const len = Number(obj.len || obj.Len || 0)
+      const origLen = Number(obj.origLen || obj.OrigLen || len)
+      const truncated = len < origLen
+      const time = obj.time || obj.timestamp || now
+      const summary = parseStartLine(headers)
+      const srcIP = obj.srcIP || ''
+      const srcPort = Number(obj.srcPort || 0)
+      const dstIP = obj.dstIP || ''
+      const dstPort = Number(obj.dstPort || 0)
+      return {
+        id: `${time}-${Math.random().toString(36).slice(2)}`,
+        time, pid, comm, wire, len, origLen, truncated,
+        http: { direction, headers, body },
+        summary,
+        srcIP, srcPort, dstIP, dstPort,
+      }
+    }
+
+    
+
+    const App = {
+      setup() {
+        const state = reactive({
+          events: [],
+          es: null,
+          isConnected: false,
+         
+          connType: 'idle',
+          autoUrl: '',
+          filters: { keyword: '', pid: null, wire: '', httpDirection: '' },
+        })
+        const paused = ref(false)
+        // 当暂停开启时，断开 SSE 连接
+        watch(paused, (v) => { if (v) disconnectSSE() })
+
+        function addEvent(obj) {
+          const e = normalizeEvent(obj)
+          state.events.unshift(e)
+        }
+
+        function connectSSE() {
+          if (state.es) { try { state.es.close() } catch (e) {} state.es = null }
+          const loc = window.location
+          const proto = loc.protocol === 'https:' ? 'https:' : 'http:'
+          const url = `${proto}//${loc.host}/events-sse`
+          state.autoUrl = url
+          try {
+            state.es = new EventSource(url)
+            state.connType = 'sse'
+          } catch (e) {
+            state.connType = 'idle'
+            return
+          }
+          state.es.onopen = () => { state.isConnected = true }
+
+          // 发生错误时，主动关闭以禁用 EventSource 的自动重试
+          state.es.onerror = () => {
+            try { state.es && state.es.close() } catch(e) {}
+            state.es = null
+            state.isConnected = false
+            state.connType = 'idle'
+          }
+          state.es.onmessage = (evt) => { 
+            if (paused.value) return
+            const data = evt.data
+            const obj = tryParseJSONLine(data)
+            if (obj) addEvent(obj)
+          }
+        }
+
+        function disconnectSSE() {
+          if (state.es) { try { state.es.close() } catch (e) {} state.es = null }
+          state.isConnected = false
+          state.connType = 'idle'
+        }
+
+        function clearAll() { state.events = [] }
+
+        // 手动重连：恢复接收并建立连接
+        function reconnect() {
+          paused.value = false
+          connectSSE()
+        }
+        const filteredEvents = computed(() => {
+          const kw = (state.filters.keyword || '').toLowerCase()
+          const pid = Number(state.filters.pid || 0)
+          const wire = state.filters.wire || ''
+          const httpDirection = state.filters.httpDirection || ''
+          return state.events.filter(e => {
+            if (pid && e.pid !== pid) return false
+            if (wire && e.wire !== wire) return false
+            if (httpDirection && e.http.direction !== httpDirection) return false
+            if (kw) {
+              const text = `${e.comm} ${e.summary.method} ${e.summary.detail} ${e.http.headers.Host || ''}`.toLowerCase()
+              if (!text.includes(kw)) return false
+            }
+            return true
+          })
+        })
+
+        // 虚拟滚动与排序
+        const rowHeight = 44 // 行高（像素）
+        const buffer = 8 // 额外渲染行数
+        const virtualTableContainer = ref(null)
+        const scrollTop = ref(0)
+        const sort = reactive({ prop: 'time', order: 'desc' })
+        // const expandedRows = reactive(new Set()) // removed
+        const expandVisible = ref(false)
+        const expandItem = ref(null)
+        function toggleSort(prop) {
+          if (sort.prop === prop) { sort.order = sort.order === 'asc' ? 'desc' : 'asc' }
+          else { sort.prop = prop; sort.order = 'desc' }
+        }
+        function getSortIcon(prop) {
+          if (sort.prop !== prop) return ''
+          return sort.order === 'asc' ? '↑' : '↓'
+        }
+
+        function onScroll(e) { scrollTop.value = e.target.scrollTop }
+
+        function preferIPv4(ip) {
+          if (!ip) return ip
+          // 快速将 IPv4 映射的 IPv6 表示 (::ffff:0:xxxx:yyyy 或 ::ffff:xxxx:yyyy) 转成点分十进制
+          const m = ip.match(/::ffff:(?:0:)?([0-9a-fA-F]{1,4}):([0-9a-fA-F]{1,4})$/)
+          if (m) {
+            const hi = parseInt(m[1], 16)
+            const lo = parseInt(m[2], 16)
+            const b1 = (hi >> 8) & 0xff, b2 = hi & 0xff, b3 = (lo >> 8) & 0xff, b4 = lo & 0xff
+            return `${b4}.${b3}.${b2}.${b1}`
+          }
+          return ip
+        }
+        function formatAddr(ip, port) {
+          if (!ip) return '-'
+          const tip = preferIPv4(ip)
+          return port ? `${tip}:${port}` : tip
+        }
+        function openExpand(item) {
+          expandItem.value = item
+          expandVisible.value = true
+        }
+
+        const sortedEvents = computed(() => {
+          const arr = filteredEvents.value.slice()
+          const { prop, order } = sort
+          arr.sort((a,b) => {
+            let va = a[prop], vb = b[prop]
+            if (prop === 'time' || prop === 'len' || prop === 'pid') { va = Number(va)||0; vb = Number(vb)||0 }
+            else { va = String(va||''); vb = String(vb||'') }
+            if (va === vb) return 0
+            return (va < vb ? -1 : 1) * (order==='asc'?1:-1)
+          })
+          return arr
+        })
+
+        const containerHeight = 640
+        const total = computed(() => sortedEvents.value.length)
+        const visibleCount = computed(() => Math.ceil(containerHeight / rowHeight) + buffer)
+        const startIndex = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight) - Math.floor(buffer/2)))
+        const endIndex = computed(() => Math.min(total.value, startIndex.value + visibleCount.value))
+        const visibleItems = computed(() => sortedEvents.value.slice(startIndex.value, endIndex.value))
+        const spacerHeight = computed(() => total.value * rowHeight)
+        const topOffset = computed(() => startIndex.value * rowHeight)
+
+        watch([filteredEvents, sortedEvents], () => {
+          if (virtualTableContainer.value) {
+            const el = virtualTableContainer.value
+            const maxScroll = Math.max(0, spacerHeight.value - el.clientHeight)
+            if (scrollTop.value > maxScroll) {
+              scrollTop.value = Math.min(scrollTop.value, maxScroll)
+              el.scrollTop = scrollTop.value
+            }
+          }
+        })
+
+        const connTypeDisplay = computed(() => {
+          if (state.connType === 'sse') return 'SSE'
+          if (state.connType === 'idle') return '未连接'
+          return state.connType || '未连接'
+        })
+// 暴露一个可响应的连接状态用于按钮禁用
+        const isConnected = computed(() => state.isConnected)
+        function formatTime(t) {
+          const d = new Date(t)
+          const pad = n => String(n).padStart(2,'0')
+          return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`
+        }
+
+        onMounted(() => {
+          connectSSE()
+        })
+
+        return {
+          ...state,
+          events: state.events,
+          filters: state.filters,
+          filteredEvents,
+           paused,
+          // 虚拟表格暴露
+          virtualTableContainer,
+          visibleItems,
+          spacerHeight,
+          topOffset,
+          onScroll,
+          // toggleExpand, // removed
+          // expandedRows, // removed
+          toggleSort,
+          getSortIcon,
+          expandVisible,
+          expandItem,
+          openExpand,
+          connTypeDisplay,
+          clearAll, 
+          formatTime,
+          // 新增：暴露连接状态与手动重连
+          isConnected,
+          reconnect,
+          // 新增：格式化地址
+          formatAddr,
+        }
+      }
+    }
+
+    createApp(App).use(ElementPlus).mount('#app')
+  </script>
+</body>
+</html>
