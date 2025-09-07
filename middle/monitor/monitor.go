@@ -28,9 +28,6 @@ type Monitor struct {
 	pendingRequests map[string]*PendingRequest
 	requestsMu      sync.RWMutex
 
-	// 统计更新
-	statsUpdater *StatsUpdater
-
 	// 多中间件管理器
 	middlewareManagers map[string]MiddlewareManager
 
@@ -85,12 +82,6 @@ func NewMonitor(cfg *config.Config) (*Monitor, error) {
 	// 初始化多中间件管理器
 	m.initializeMiddlewareManagers()
 
-	// 兼容性处理：如果使用旧的单中间件配置
-	if cfg.Middleware != "" {
-		m.initializeLegacyMiddleware(cfg)
-	}
-	m.statsUpdater = NewStatsUpdater(m.stats)
-
 	// 设置包捕获回调
 	cap.SetCallback(m.onRequestResponse)
 
@@ -142,46 +133,29 @@ func (m *Monitor) initializeMiddlewareManagers() {
 		case "postgres":
 			// TODO: 实现PostgreSQL管理器
 			if m.config.Verbose {
-				log.Printf("🚧 PostgreSQL管理器 [%s] 尚未实现", name)
+				// log.Printf("🚧 PostgreSQL管理器 [%s] 尚未实现", name)
 			}
 
 		case "sqlserver":
 			// TODO: 实现SQL Server管理器
 			if m.config.Verbose {
-				log.Printf("🚧 SQL Server管理器 [%s] 尚未实现", name)
+				// log.Printf("🚧 SQL Server管理器 [%s] 尚未实现", name)
 			}
 
 		case "minio":
 			// TODO: 实现MinIO管理器
 			if m.config.Verbose {
-				log.Printf("🚧 MinIO管理器 [%s] 尚未实现", name)
+				// log.Printf("🚧 MinIO管理器 [%s] 尚未实现", name)
 			}
 
 		case "rocketmq":
 			// TODO: 实现RocketMQ管理器
 			if m.config.Verbose {
-				log.Printf("🚧 RocketMQ管理器 [%s] 尚未实现", name)
+				// log.Printf("🚧 RocketMQ管理器 [%s] 尚未实现", name)
 			}
 
 		default:
-			log.Printf("⚠️ 不支持的中间件类型: %s [%s]", mwConfig.Type, name)
-		}
-	}
-}
-
-// initializeLegacyMiddleware 初始化旧的单中间件配置（兼容性）
-func (m *Monitor) initializeLegacyMiddleware(cfg *config.Config) {
-	if cfg.Middleware == "redis" && cfg.Port != 0 {
-		redisManager := parsers.NewRedisClientManager(cfg)
-		if err := redisManager.Initialize(); err != nil {
-			if cfg.Verbose {
-				log.Printf("⚠️ 无法初始化旧Redis配置: %v", err)
-			}
-		} else {
-			m.middlewareManagers["legacy-redis"] = &RedisManagerAdapter{redisManager}
-			if cfg.Verbose {
-				log.Printf("✅ 旧Redis配置初始化成功: %s:%d", cfg.Host, cfg.Port)
-			}
+			// log.Printf("⚠️ 不支持的中间件类型: %s [%s]", mwConfig.Type, name)
 		}
 	}
 }
@@ -345,39 +319,15 @@ func (m *Monitor) printMonitorInfo(rr *types.RequestResponse) {
 		// 构造输出格式: db:cmd-key-val-valLen-resp-respLen-time-clientip-clientport
 		output := m.formatRequestResponse(rr)
 		if output != "" {
-			log.Printf("%s", output)
+			// log.Printf("%s", output)
 		}
 
-		// 添加调试信息
-		if m.config.Verbose {
-			// log.Printf("✅ 成功匹配请求响应: %s -> %s", rr.Request.Command, rr.Response.Command)
-		}
 	} else if rr.Request != nil {
-		// log.Printf("捕获请求 [%s] %s: %s (存储用于匹配)",
-		// 	m.config.Middleware,
-		// 	rr.Request.Command,
-		// 	rr.Request.ID,
-		// )
 
-		// 添加调试信息
-		// if m.config.Verbose {
-		// 	log.Printf("📝 请求详情: ParsedData=%+v", rr.Request.ParsedData)
-		// }
 	} else if rr.Response != nil {
-		// log.Printf("捕获响应 [%s] %s: %s (耗时: %v, 匹配请求: %v)",
-		// 	m.config.Middleware,
-		// 	rr.Response.Command,
-		// 	rr.Response.ID,
-		// 	rr.Duration,
-		// 	rr.Request != nil,
-		// )
 
-		// 添加调试信息
-		if m.config.Verbose {
-			// log.Printf("📝 响应详情: ParsedData=%+v", rr.Response.ParsedData)
-		}
 	} else {
-		log.Printf("⚠️ 无效的请求响应对: Request=%v, Response=%v", rr.Request != nil, rr.Response != nil)
+		// log.Printf("⚠️ 无效的请求响应对: Request=%v, Response=%v", rr.Request != nil, rr.Response != nil)
 	}
 }
 
@@ -477,31 +427,82 @@ func (m *Monitor) getMiddlewareManagerByType(middlewareType string) MiddlewareMa
 
 // formatRedisRequestResponse 格式化Redis请求响应
 func (m *Monitor) formatRedisRequestResponse(rr *types.RequestResponse) string {
-	// 获取Redis管理器
-	redisManager := m.getMiddlewareManagerByType("redis")
-	if redisManager == nil {
-		// 没有Redis管理器，使用通用格式
-		return m.formatGenericRequestResponse(rr, "redis")
+	// 首先检查是否有有效的解析数据
+	if rr.Request == nil || rr.Response == nil {
+		return ""
 	}
 
-	// 解析请求参数
-	cmd, key, val, valLen := redisManager.ParseRequest(rr.Request)
-
-	// 解析响应
-	resp, respLen := redisManager.ParseResponse(rr.Response)
-
-	// 时间（纳秒）
-	timestamp := rr.Duration.Nanoseconds()
-
-	// 客户端 IP 和 端口
+	// 尝试使用高级Redis解析器的数据结构
+	var cmd, key, val, valLen, resp, respLen, dbNum string
 	clientIP, clientPort := m.getClientInfo(rr.Connection)
 
-	// 数据库编号（根据连接获取）
-	dbNum := redisManager.GetCurrentDatabase(rr.Connection)
+	// 检查请求的ParsedData类型
+	if parsedCmd, ok := rr.Request.ParsedData.(*parsers.RedisParsedCommand); ok {
+		// 使用高级解析器的数据结构
+		cmd = strings.ToLower(parsedCmd.Command)
+		key = m.truncateStringWithDefault(parsedCmd.Key, 16, "-")
+		val = m.truncateStringWithDefault(parsedCmd.Value, 16, "-")
+		if parsedCmd.Value != "" {
+			valLen = fmt.Sprintf("%db", len(parsedCmd.Value))
+		} else {
+			valLen = "0b"
+		}
+		dbNum = parsedCmd.Database
+		if dbNum == "" {
+			dbNum = "0"
+		}
+	} else {
+		// 回退到传统解析器格式
+		redisManager := m.getMiddlewareManagerByType("redis")
+		if redisManager != nil {
+			cmd, key, val, valLen = redisManager.ParseRequest(rr.Request)
+			dbNum = redisManager.GetCurrentDatabase(rr.Connection)
+		} else {
+			cmd = strings.ToLower(rr.Request.Command)
+			key = "-"
+			val = "-"
+			valLen = "0b"
+			dbNum = "0"
+			// 调试信息：请求ParsedData类型
+			if m.config.Verbose {
+				// log.Printf("⚠️ 请求ParsedData类型不匹配: %T", rr.Request.ParsedData)
+			}
+		}
+	}
 
-	// 构造格式: db:cmd-key-val-valLen-resp-respLen-time-clientip-clientport
-	return fmt.Sprintf("redisMonitorInfo: %s:%s-%s-%s-%s-%s-%s-%dns-%s:%s",
-		dbNum, cmd, key, val, valLen, resp, respLen, timestamp, clientIP, clientPort)
+	// 检查响应的ParsedData类型
+	if parsedResp, ok := rr.Response.ParsedData.(*parsers.RedisParsedResponse); ok {
+		// 使用高级解析器的响应数据
+		resp = m.truncateStringWithDefault(parsedResp.Content, 16, "-")
+		respLen = fmt.Sprintf("%db", len(parsedResp.Content))
+
+	} else {
+		// 回退到传统解析器格式
+		redisManager := m.getMiddlewareManagerByType("redis")
+		if redisManager != nil {
+			resp, respLen = redisManager.ParseResponse(rr.Response)
+		} else {
+			resp = "-"
+			respLen = "0b"
+		}
+	}
+
+	// 确保时间为正值（修复负数时间问题）
+	timestamp := rr.Duration.Nanoseconds()
+	if timestamp < 0 {
+		// 如果时间为负，可能是时间戳顺序有问题，使用绝对值
+		timestamp = -timestamp
+		if m.config.Verbose {
+			// log.Printf("⚠️ 检测到负数时间，已修正: %dns", timestamp)
+		}
+	}
+
+	// 智能时间格式化
+	timeStr := m.formatDuration(rr.Duration)
+
+	// 构造格式: db:cmd-key-val-valLen-resp-respLen-time-clientip:clientport
+	return fmt.Sprintf("redisMonitorInfo: %s:%s-%s-%s-%s-%s-%s-%s-%s:%s",
+		dbNum, cmd, key, val, valLen, resp, respLen, timeStr, clientIP, clientPort)
 }
 
 // formatGenericRequestResponse 通用格式化方法
@@ -542,4 +543,45 @@ func (m *Monitor) getClientInfo(conn *types.Connection) (ip, port string) {
 	}
 
 	return ip, port
+}
+
+// truncateStringWithDefault 截断字符串并设置默认值
+func (m *Monitor) truncateStringWithDefault(s string, maxLen int, defaultVal string) string {
+	if s == "" {
+		return defaultVal
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
+}
+
+// formatDuration 智能格式化时间间隔
+func (m *Monitor) formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = -d // 使用绝对值
+	}
+
+	// 根据时间大小选择合适的单位
+	if d >= time.Second {
+		// 大于等于1秒，显示秒
+		seconds := float64(d) / float64(time.Second)
+		if seconds >= 1000 {
+			// 大于1000秒，显示分钟
+			minutes := seconds / 60
+			return fmt.Sprintf("%.1fm", minutes)
+		}
+		return fmt.Sprintf("%.3fs", seconds)
+	} else if d >= time.Millisecond {
+		// 1毫秒到999毫秒，显示毫秒
+		ms := float64(d) / float64(time.Millisecond)
+		return fmt.Sprintf("%.1fms", ms)
+	} else if d >= time.Microsecond {
+		// 1微秒到999微秒，显示微秒
+		us := float64(d) / float64(time.Microsecond)
+		return fmt.Sprintf("%.1fμs", us)
+	} else {
+		// 小于1微秒，显示纳秒
+		return fmt.Sprintf("%dns", d.Nanoseconds())
+	}
 }

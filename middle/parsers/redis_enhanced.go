@@ -1,4 +1,5 @@
-// Package parsers - 增强的Redis协议解析器，支持请求响应关联
+// Package parsers - 增强的Redis协议解析器（已弃用，请使用RedisAdvancedParser）
+// 此文件保留用于向后兼容，建议使用redis_advanced.go中的新实现
 package parsers
 
 import (

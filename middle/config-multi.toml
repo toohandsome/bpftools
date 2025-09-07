@@ -15,40 +15,40 @@ max_packets = 1000
 # Redis 配置
 [middlewares.redis]
 type = "redis"
-host = "192.168.2.226"
+# host 将继承全局配置的 192.168.2.226
 port = 6379
 enabled = true
 # Redis 认证配置
 username = ""           # Redis 6.0+ 用户名，空字符串表示不使用
 password = ""           # Redis 密码，空字符串表示无密码
 database = 0            # 默认连接的数据库编号
-redis_cli_path = "/opt/yanhua/middle/redis/src/redis-cli"  # redis-cli 命令路径，默认使用 PATH 中的
+redis_cli_path = "redis-cli"  # redis-cli 命令路径，默认使用 PATH 中的
 
 # PostgreSQL 配置
 [middlewares.postgres]
 type = "postgres"
-host = "127.0.0.1"
+# host 将继承全局配置的 192.168.2.226
 port = 5432
 enabled = false
 
 # SQL Server 配置
 [middlewares.sqlserver]
 type = "sqlserver"
-host = "127.0.0.1"
+# host 将继承全局配置的 192.168.2.226
 port = 1433
 enabled = false
 
 # MinIO S3 配置
 [middlewares.minio]
 type = "minio"
-host = "127.0.0.1"
+# host 将继承全局配置的 192.168.2.226
 port = 9000
 enabled = false
 
 # RocketMQ 配置
 [middlewares.rocketmq]
 type = "rocketmq"
-host = "127.0.0.1"
+# host 将继承全局配置的 192.168.2.226
 port = 10911
 enabled = false
 

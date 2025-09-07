@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/myserver/go-server/ebpf/middle/config"
 	"github.com/myserver/go-server/ebpf/middle/monitor"
 )
@@ -49,7 +48,7 @@ func main() {
 	if err != nil {
 		// 配置文件加载失败，使用默认配置
 		if *verbose {
-			log.Printf("⚠️ 加载配置文件失败: %v，使用默认配置", err)
+			// log.Printf("⚠️ 加载配置文件失败: %v，使用默认配置", err)
 		}
 		cfg = &config.Config{}
 	} else {
@@ -69,6 +68,40 @@ func main() {
 
 	// 设置默认值
 	cfg.SetDefaults()
+	// 打印出读取的配置
+	if *verbose {
+		fmt.Printf("🔍 配置详细信息:\n")
+		fmt.Printf("  原始配置文件配置:\n")
+		fmt.Printf("    Interface: %s\n", cfg.Interface)
+		fmt.Printf("    Host: %s\n", cfg.Host)
+		fmt.Printf("    Mode: %s\n", cfg.Mode)
+		fmt.Printf("    Verbose: %t\n", cfg.Verbose)
+		fmt.Printf("    Timeout: %v\n", cfg.Timeout)
+		fmt.Printf("    BufferSize: %d\n", cfg.BufferSize)
+		fmt.Printf("    MaxPackets: %d\n", cfg.MaxPackets)
+		fmt.Printf("    Filter: %s\n", cfg.Filter)
+
+		fmt.Printf("  命令行参数配置:\n")
+		fmt.Printf("    Interface: %s\n", cmdConfig.Interface)
+		fmt.Printf("    Host: %s\n", cmdConfig.Host)
+		fmt.Printf("    Port: %d\n", cmdConfig.Port)
+		fmt.Printf("    Middleware: %s\n", cmdConfig.Middleware)
+		fmt.Printf("    Mode: %s\n", cmdConfig.Mode)
+		fmt.Printf("    Verbose: %t\n", cmdConfig.Verbose)
+		fmt.Printf("    Timeout: %v\n", cmdConfig.Timeout)
+		fmt.Printf("    Filter: %s\n", cmdConfig.Filter)
+
+		fmt.Printf("  中间件配置:\n")
+		for name, mw := range cfg.Middlewares {
+			fmt.Printf("    %s: Type=%s, Host=%s, Port=%d, Enabled=%t\n",
+				name, mw.Type, mw.Host, mw.Port, mw.Enabled)
+		}
+
+		fmt.Printf("  兼容性配置:\n")
+		fmt.Printf("    Port: %d\n", cfg.Port)
+		fmt.Printf("    Middleware: %s\n", cfg.Middleware)
+		fmt.Println()
+	}
 
 	if *iface == "" && cfg.Interface == "" {
 		fmt.Println("使用方法:")
@@ -217,7 +250,7 @@ func main() {
 
 	case err := <-monitorDone:
 		if err != nil && err != context.Canceled {
-			log.Printf("监控器错误: %v", err)
+			// log.Printf("监控器错误: %v", err)
 		}
 		cancel()
 		mon.Stop()
@@ -257,13 +290,8 @@ func loadConfigFromFile(configPath string) (*config.Config, error) {
 		return nil, fmt.Errorf("配置文件不存在: %s", configPath)
 	}
 
-	// 尝试使用TOML直接解析为新格式
-	var cfg config.Config
-	if _, err := toml.DecodeFile(configPath, &cfg); err != nil {
-		return nil, fmt.Errorf("解析配置文件失败: %v", err)
-	}
-
-	return &cfg, nil
+	// 使用配置包的加载函数，确保正确处理继承逻辑
+	return config.LoadMultiMiddlewareConfig(configPath)
 }
 
 // processMiddlewaresFlag 处理命令行指定的中间件列表

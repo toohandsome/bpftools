@@ -2,22 +2,28 @@
 package parsers
 
 import (
+	"time"
+
 	"github.com/myserver/go-server/ebpf/middle/types"
 )
 
 // GetParser 根据中间件类型获取对应的解析器
 func GetParser(middleware string) types.ProtocolParser {
+	return GetParserWithConfig(middleware, false) // 默认verbose=false
+}
+
+// GetParserWithConfig 根据中间件类型和配置获取对应的解析器
+func GetParserWithConfig(middleware string, verbose bool) types.ProtocolParser {
 	switch middleware {
 	case "redis":
-		return NewRedisParser()
-	case "redis-enhanced":
-		// 返回增强版Redis解析器，但需要适配接口
-		config := &RedisParserConfig{
-			MaxContentLength: 64,
-			EnableDBTracking: true,
-			Verbose:          false,
+		config := &RedisAdvancedConfig{
+			MaxContentLength:    64,
+			EnableDBTracking:    true,
+			SessionTimeout:      30 * time.Second,
+			EnableDetailedStats: true,
+			Verbose:             verbose,
 		}
-		return NewRedisEnhancedParser(config)
+		return NewRedisAdvancedParserAdapter(config)
 	case "postgres":
 		return NewPostgresParser()
 	case "sqlserver":

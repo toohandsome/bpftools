@@ -4,7 +4,6 @@ package parsers
 import (
 	"context"
 	"fmt"
-	"log"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -79,13 +78,13 @@ func (rcm *RedisClientManager) Initialize() error {
 	rcm.processInfo.PID = pid
 
 	if rcm.verbose {
-		log.Printf("🔍 找到Redis进程 PID: %d", pid)
+		// log.Printf("🔍 找到Redis进程 PID: %d", pid)
 	}
 
 	// 尝试获取初始的客户端信息
 	if err := rcm.queryRedisClientInfo(); err != nil {
 		if rcm.verbose {
-			log.Printf("⚠️ 获取Redis客户端信息失败: %v", err)
+			// log.Printf("⚠️ 获取Redis客户端信息失败: %v", err)
 		}
 	}
 
@@ -115,10 +114,10 @@ func (rcm *RedisClientManager) StartPeriodicUpdate(ctx context.Context) {
 			case <-rcm.updateTicker.C:
 				if err := rcm.queryRedisClientInfo(); err != nil {
 					if rcm.verbose {
-						log.Printf("⚠️ 定时更新Redis客户端信息失败: %v", err)
+						// log.Printf("⚠️ 定时更新Redis客户端信息失败: %v", err)
 					}
 				} else if rcm.verbose {
-					log.Printf("✅ 成功更新Redis客户端映射关系")
+					// log.Printf("✅ 成功更新Redis客户端映射关系")
 				}
 			}
 		}
@@ -197,10 +196,7 @@ func (rcm *RedisClientManager) ParseRedisRequest(req *types.Message) (cmd, key, 
 			// 对于 SELECT 命令，更新数据库编号
 			if len(args) > 1 && strings.ToUpper(args[0]) == "SELECT" {
 				rcm.SetCurrentDatabase(req.Connection, args[1])
-				if rcm.verbose {
-					log.Printf("📋 检测到SELECT命令: 连接 %s 切换到数据库 %s",
-						rcm.getConnectionKey(req.Connection), args[1])
-				}
+
 			}
 		}
 	}
@@ -248,12 +244,12 @@ func (rcm *RedisClientManager) detectDatabaseFromConnection(conn *types.Connecti
 
 	// 无法确定数据库，返回未知标识
 	// if rcm.verbose {
-	// 	log.Printf("⚠️ 无法确定连接 %s -> %s 的数据库编号",
+	// 	// log.Printf("⚠️ 无法确定连接 %s -> %s 的数据库编号",
 	// 		conn.LocalAddr, conn.RemoteAddr)
-	// 	log.Printf("💡 解决方案：")
-	// 	log.Printf("   1. 在监控程序启动后执行SELECT命令")
-	// 	log.Printf("   2. 重新连接Redis客户端")
-	// 	log.Printf("   3. 使用redis-cli -n X指定数据库")
+	// 	// log.Printf("💡 解决方案：")
+	// 	// log.Printf("   1. 在监控程序启动后执行SELECT命令")
+	// 	// log.Printf("   2. 重新连接Redis客户端")
+	// 	// log.Printf("   3. 使用redis-cli -n X指定数据库")
 	// }
 
 	return "?" // 使用'?'表示数据库未知，提醒用户这不是确定的值
@@ -280,7 +276,7 @@ func (rcm *RedisClientManager) tryDetectDatabaseFromSystemInfo(conn *types.Conne
 
 	if exists {
 		if rcm.verbose {
-			log.Printf("🎯 从系统信息检测到数据库: %s -> 数据库 %d", clientAddr, db)
+			// log.Printf("🎯 从系统信息检测到数据库: %s -> 数据库 %d", clientAddr, db)
 		}
 		return fmt.Sprintf("%d", db)
 	}
@@ -301,7 +297,7 @@ func (rcm *RedisClientManager) getRecentDatabaseSelection(conn *types.Connection
 
 	if exists && db != "0" {
 		if rcm.verbose {
-			log.Printf("🔍 从历史记录中找到数据库: 连接 %s 使用数据库 %s", connKey, db)
+			// log.Printf("🔍 从历史记录中找到数据库: 连接 %s 使用数据库 %s", connKey, db)
 		}
 		return db
 	}
@@ -370,11 +366,11 @@ func (rcm *RedisClientManager) queryRedisClientInfo() error {
 	}
 
 	// if rcm.verbose {
-	// 	log.Printf("🔍 Redis CLIENT LIST 响应:")
+	// 	// log.Printf("🔍 Redis CLIENT LIST 响应:")
 	// 	lines := strings.Split(output, "\n")
 	// 	for i, line := range lines {
 	// 		if strings.TrimSpace(line) != "" && i < 3 { // 只显示前3行
-	// 			log.Printf("   %s", line)
+	// 			// log.Printf("   %s", line)
 	// 		}
 	// 	}
 	// }
@@ -387,7 +383,7 @@ func (rcm *RedisClientManager) queryRedisClientInfo() error {
 		}
 
 		if err := rcm.parseClientListLine(line); err != nil && rcm.verbose {
-			log.Printf("⚠️ 解析客户端信息失败: %v", err)
+			// log.Printf("⚠️ 解析客户端信息失败: %v", err)
 		}
 	}
 
@@ -464,7 +460,7 @@ func (rcm *RedisClientManager) parseClientListLine(line string) error {
 		rcm.processInfo.mu.Unlock()
 
 		// if rcm.verbose {
-		// 	log.Printf("✅ 找到客户端映射: addr=%s db=%d", addr, db)
+		// 	// log.Printf("✅ 找到客户端映射: addr=%s db=%d", addr, db)
 		// }
 	}
 

@@ -4,7 +4,6 @@ package capture
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -24,7 +23,6 @@ type Capture struct {
 	assembler *tcpassembly.Assembler
 	factory   *streamFactory
 	mu        sync.RWMutex
-	stats     *types.Stats
 	callback  func(*types.RequestResponse)
 
 	// 全局请求存储（跨流共享）
@@ -55,11 +53,8 @@ func NewCapture(cfg *config.Config) (*Capture, error) {
 	}
 
 	c := &Capture{
-		config: cfg,
-		handle: handle,
-		stats: &types.Stats{
-			StartTime: time.Now(),
-		},
+		config:           cfg,
+		handle:           handle,
 		pendingRequests:  make(map[string]*types.Message),
 		pendingResponses: make(map[string]*types.Message),
 	}
@@ -81,20 +76,18 @@ func NewCapture(cfg *config.Config) (*Capture, error) {
 // Start 启动包捕获
 func (c *Capture) Start(ctx context.Context) error {
 	if c.config.Verbose {
-		log.Printf("开始在接口 %s 上捕获包，过滤器: %s", c.config.Interface, c.config.BuildBPFFilter())
+		// log.Printf("开始在接口 %s 上捕获包，过滤器: %s", c.config.Interface, c.config.BuildBPFFilter())
 	}
 
 	packetSource := gopacket.NewPacketSource(c.handle, c.handle.LinkType())
 	packets := packetSource.Packets()
 
-	// 启动定时清理（改为更频繁的清理）
 	// 每1秒检查一次，实现近实时的请求响应匹配
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	// 用于统计捕获到的包数量
 	packetCount := 0
-	lastLogTime := time.Now()
 
 	// 设置包捕获超时时间，避免无限阻塞
 	packetTimeout := time.NewTicker(100 * time.Millisecond)
@@ -104,27 +97,18 @@ func (c *Capture) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			if c.config.Verbose {
-				log.Printf("收到停止信号，已捕获 %d 个包", packetCount)
+				// log.Printf("收到停止信号，已捕获 %d 个包", packetCount)
 			}
 			return ctx.Err()
 		case <-ticker.C:
-			// 定期清理旧连接（使用更短的超时时间）
-			// 原来30秒太长，改为2秒强制刷新不完整的流
 			c.assembler.FlushOlderThan(time.Now().Add(-2 * time.Second))
-
-			// 清理过期的待匹配请求
 			c.cleanupExpiredRequests()
-
-			// 定期输出统计信息
-			// if c.config.Verbose {
-			// 	log.Printf("已捕获 %d 个包，待匹配请求数: %d", packetCount, len(c.pendingRequests))
-			// }
 		case <-packetTimeout.C:
 			// 定期检查上下文是否已取消，避免长时间阻塞在packets通道
 			select {
 			case <-ctx.Done():
 				if c.config.Verbose {
-					log.Printf("在超时检查中收到停止信号，已捕获 %d 个包", packetCount)
+					// log.Printf("在超时检查中收到停止信号，已捕获 %d 个包", packetCount)
 				}
 				return ctx.Err()
 			default:
@@ -138,10 +122,7 @@ func (c *Capture) Start(ctx context.Context) error {
 
 			// 每1000个包输出一次统计
 			if c.config.Verbose && packetCount%1000 == 0 {
-				log.Printf("已处理 %d 个包", packetCount)
-			} else if c.config.Verbose && time.Since(lastLogTime) > 10*time.Second {
-				log.Printf("当前已处理 %d 个包", packetCount)
-				lastLogTime = time.Now()
+				// log.Printf("已处理 %d 个包", packetCount)
 			}
 
 			c.processPacket(packet)
@@ -152,33 +133,33 @@ func (c *Capture) Start(ctx context.Context) error {
 // Stop 停止包捕获
 func (c *Capture) Stop() {
 	if c.config.Verbose {
-		log.Printf("正在停止包捕获...")
+		// log.Printf("正在停止包捕获...")
 	}
 
 	// 取消上下文，通知所有goroutine停止
 	if c.cancel != nil {
 		c.cancel()
 		if c.config.Verbose {
-			log.Printf("已取消上下文")
+			// log.Printf("已取消上下文")
 		}
 	}
 
 	if c.handle != nil {
 		c.handle.Close()
 		if c.config.Verbose {
-			log.Printf("已关闭网络句柄")
+			// log.Printf("已关闭网络句柄")
 		}
 	}
 
 	if c.assembler != nil {
 		c.assembler.FlushAll()
 		if c.config.Verbose {
-			log.Printf("已刷新TCP组装器")
+			// log.Printf("已刷新TCP组装器")
 		}
 	}
 
 	if c.config.Verbose {
-		log.Printf("包捕获已停止")
+		// log.Printf("包捕获已停止")
 	}
 }
 
@@ -224,11 +205,6 @@ func (c *Capture) processPacket(packet gopacket.Packet) {
 		}
 	}
 
-	// 兼容性检查：如果没有多端口配置，使用单端口模式
-	if !isTargetPort && c.config.Port != 0 {
-		isTargetPort = (currentSrcPort == c.config.Port || currentDstPort == c.config.Port)
-	}
-
 	if !isTargetPort {
 		return
 	}
@@ -259,11 +235,11 @@ func (c *Capture) processPacket(packet gopacket.Packet) {
 
 			// 根据是否截断显示不同的信息
 			// if len(tcp.Payload) > 32 {
-			// 	// log.Printf("  载荷内容 [总长度%d字节，显示前32字节]: %s", len(tcp.Payload), hexStr)
-			// 	log.Printf("  明文内容: %q -> %s", string(tcp.Payload[:maxLen]), printableStr)
+			// 	// // log.Printf("  载荷内容 [总长度%d字节，显示前32字节]: %s", len(tcp.Payload), hexStr)
+			// 	// log.Printf("  明文内容: %q -> %s", string(tcp.Payload[:maxLen]), printableStr)
 			// } else {
-			// 	// log.Printf("  载荷内容 [%d字节]: %s", len(tcp.Payload), hexStr)
-			// 	log.Printf("  明文内容: %q -> %s", string(tcp.Payload[:maxLen]), printableStr)
+			// 	// // log.Printf("  载荷内容 [%d字节]: %s", len(tcp.Payload), hexStr)
+			// 	// log.Printf("  明文内容: %q -> %s", string(tcp.Payload[:maxLen]), printableStr)
 			// }
 
 		}
@@ -292,7 +268,11 @@ func (c *Capture) onRequestResponse(rr *types.RequestResponse) {
 	if callback != nil {
 		callback(rr)
 	}
+}
 
+// notifyCallback 直接通知回调（为高级解析器提供）
+func (c *Capture) notifyCallback(rr *types.RequestResponse) {
+	c.onRequestResponse(rr)
 }
 
 // storeRequest 存储请求到全局缓存
@@ -307,7 +287,7 @@ func (c *Capture) storeRequest(msg *types.Message) {
 	c.requestsMu.Unlock()
 
 	// if c.config.Verbose {
-	// 	log.Printf("📋 存储请求: %s, 连接: %s -> %s, 当前待匹配请求数: %d",
+	// 	// log.Printf("📋 存储请求: %s, 连接: %s -> %s, 当前待匹配请求数: %d",
 	// 		msg.ID, msg.Connection.LocalAddr, msg.Connection.RemoteAddr, len(c.pendingRequests))
 	// }
 
@@ -337,22 +317,8 @@ func (c *Capture) matchAndRemoveRequest(connInfo *types.Connection) *types.Messa
 
 	if oldestID != "" {
 		delete(c.pendingRequests, oldestID)
-		// if c.config.Verbose {
-		// 	log.Printf("✅ 匹配到请求: %s, 剩余待匹配请求数: %d", oldestID, len(c.pendingRequests))
-		// }
 		return oldestRequest
 	}
-
-	// if c.config.Verbose {
-	// 	// log.Printf("⚠️ 未找到匹配的请求，当前待匹配请求数: %d", len(c.pendingRequests))
-	// 	// 打印当前所有待匹配请求的连接信息
-	// 	log.Printf("📝 待匹配请求列表:")
-	// 	for id, req := range c.pendingRequests {
-	// 		log.Printf("• 请求ID: %s, 连接: %s -> %s (方向: %v), 时间: %v",
-	// 			id, req.Connection.LocalAddr, req.Connection.RemoteAddr, req.Connection.Direction, req.Timestamp.Format("15:04:05.000"))
-	// 	}
-	// 	log.Printf("🗑️ 当前响应连接: %s -> %s (方向: %v)", connInfo.LocalAddr, connInfo.RemoteAddr, connInfo.Direction)
-	// }
 
 	return nil
 }
@@ -362,17 +328,6 @@ func (c *Capture) isConnectionMatch(reqConn, respConn *types.Connection) bool {
 	if reqConn == nil || respConn == nil {
 		return false
 	}
-
-	// if c.config.Verbose {
-	// 	log.Printf("🔍 连接匹配检查: 请求(%s->%s) vs 响应(%s->%s)",
-	// 		reqConn.LocalAddr, reqConn.RemoteAddr, respConn.LocalAddr, respConn.RemoteAddr)
-
-	// 	// 检查匹配结果
-	// 	match := (reqConn.LocalAddr == respConn.RemoteAddr && reqConn.RemoteAddr == respConn.LocalAddr)
-	// 	log.Printf("🔍 匹配结果: %v", match)
-	// 	return match
-	// }
-
 	// 上反连接匹配：请求的本地地址 == 响应的远程地址，请求的远程地址 == 响应的本地地址
 	return (reqConn.LocalAddr == respConn.RemoteAddr && reqConn.RemoteAddr == respConn.LocalAddr)
 }
@@ -392,10 +347,6 @@ func (c *Capture) cleanupExpiredRequests() {
 		}
 	}
 
-	if expiredCount > 0 && c.config.Verbose {
-		log.Printf("🗑️ 清理了 %d 个过期请求，剩余待匹配请求数: %d", expiredCount, len(c.pendingRequests))
-	}
-
 	// 同时清理过期的响应
 	c.responsesMu.Lock()
 	respExpiredCount := 0
@@ -407,9 +358,6 @@ func (c *Capture) cleanupExpiredRequests() {
 	}
 	c.responsesMu.Unlock()
 
-	if respExpiredCount > 0 && c.config.Verbose {
-		log.Printf("🗑️ 清理了 %d 个过期响应，剩余待匹配响应数: %d", respExpiredCount, len(c.pendingResponses))
-	}
 }
 
 // checkPendingResponses 检查是否有等待的响应需要匹配
@@ -433,7 +381,7 @@ func (c *Capture) checkPendingResponses(request *types.Message) {
 			}
 
 			// if c.config.Verbose {
-			// 	log.Printf("✅ 延迟匹配成功: 请求=%s, 响应=%s, 耗时=%v",
+			// 	// log.Printf("✅ 延迟匹配成功: 请求=%s, 响应=%s, 耗时=%v",
 			// 		request.ID, response.ID, rr.Duration)
 			// }
 
@@ -459,7 +407,7 @@ func (c *Capture) storeOrMatchResponse(response *types.Message) bool {
 		}
 
 		// if c.config.Verbose {
-		// 	log.Printf("✅ 即时匹配成功: 请求=%s, 响应=%s, 耗时=%v",
+		// 	// log.Printf("✅ 即时匹配成功: 请求=%s, 响应=%s, 耗时=%v",
 		// 		request.ID, response.ID, rr.Duration)
 		// }
 
@@ -474,7 +422,7 @@ func (c *Capture) storeOrMatchResponse(response *types.Message) bool {
 	c.responsesMu.Unlock()
 
 	// if c.config.Verbose {
-	// 	log.Printf("📋 缓存响应等待匹配: %s, 连接: %s -> %s, 当前待匹配响应数: %d",
+	// 	// log.Printf("📋 缓存响应等待匹配: %s, 连接: %s -> %s, 当前待匹配响应数: %d",
 	// 		response.ID, response.Connection.LocalAddr, response.Connection.RemoteAddr, len(c.pendingResponses))
 	// }
 
